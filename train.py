@@ -34,7 +34,7 @@ ATTR_TO_SPECIAL_TOKEN = {'bos_token': '<bos>', 'eos_token': '<eos>', 'pad_token'
 
 """
 MODEL_INPUTS = ["input_ids", "mc_token_ids",
-                "lm_labels", "mc_labels", "token_type_ids","cluster"]
+                "lm_labels", "mc_labels", "token_type_ids","cluster","cl_token_ids"]
 
 
 
@@ -76,18 +76,19 @@ def build_input_from_segments(persona, history, reply, tokenizer,cluster, event,
     """ Build a sequence of input from 3 segments: persona, history and last reply. """
     bos, eos, speaker1, speaker2, xneed = tokenizer.convert_tokens_to_ids(
         SPECIAL_TOKENS[:-1])
-    sequence = [[bos] + list(chain(*persona)) + [xneed] + event] + \
+    sequence = [[bos] + list(chain(*persona)) + [xneed] + event+[xneed]] + \
         history + [reply + ([eos] if with_eos else [])]
     # seq: <bos> PERSONA <sp1> U1P1 <sp2> U1P2 ... 
     # P1 P2 P1 P2 P1
+    instance = {}
     
+    instance["cl_token_ids"] = len(sequence[0]) - 1
     if pid == 2:
         sequence = [sequence[0]] + [[speaker2 if (len(sequence)-i) %
                                  2 else speaker1] + s for i, s in enumerate(sequence[1:])]
     else:
         sequence = [sequence[0]] + [[speaker1 if (len(sequence)-i) %
                                  2 else speaker2] + s for i, s in enumerate(sequence[1:])]
-    instance = {}
     instance["input_ids"] = list(chain(*sequence))
     if pid == 2:
         instance["token_type_ids"] = [speaker2 if i %
@@ -184,9 +185,9 @@ def train():
     parser.add_argument("--max_history", type=int, default=2,
                         help="Number of previous exchanges to keep in history")
     parser.add_argument("--train_batch_size", type=int,
-                        default=2, help="Batch size for training")
+                        default=3, help="Batch size for training")
     parser.add_argument("--valid_batch_size", type=int,
-                        default=1, help="Batch size for validation")
+                        default=2, help="Batch size for validation")
     parser.add_argument("--gradient_accumulation_steps", type=int,
                         default=8, help="Accumulate gradients on several steps")
     parser.add_argument("--lr", type=float,
@@ -257,12 +258,12 @@ def train():
     def update(engine, batch):
         model.train()
         batch = tuple(input_tensor.to(args.device) for input_tensor in batch)
-        input_ids, mc_token_ids, lm_labels, mc_labels, token_type_ids,cluster = batch
-        (lm_loss), (mc_loss), (cluster_loss), *_ = model(
+        input_ids, mc_token_ids, lm_labels, mc_labels, token_type_ids,cluster,cl_token_ids, = batch
+        (lm_loss), (mc_loss),  *_ = model(
             input_ids, token_type_ids=token_type_ids, mc_token_ids=mc_token_ids,
-            mc_labels=mc_labels, lm_labels=lm_labels,clusters=cluster
+            mc_labels=mc_labels, lm_labels=lm_labels,clusters=cluster,cl_token_ids=cl_token_ids
         )
-        loss = (lm_loss * args.lm_coef + mc_loss * args.mc_coef + args.cl_coef * cluster_loss) / \
+        loss = (lm_loss * args.lm_coef + mc_loss * args.mc_coef ) / \
             args.gradient_accumulation_steps
         if args.fp16:
             with amp.scale_loss(loss, optimizer) as scaled_loss:
@@ -284,16 +285,16 @@ def train():
         with torch.no_grad():
             batch = tuple(input_tensor.to(args.device)
                           for input_tensor in batch)
-            input_ids, mc_token_ids, lm_labels, mc_labels, token_type_ids,cluster = batch
+            input_ids, mc_token_ids, lm_labels, mc_labels, token_type_ids,cluster,cl_token_ids = batch
             # logger.info(tokenizer.decode(input_ids[0, -1, :].tolist()))
             # if we dont send labels to model, it doesnt return losses
-            lm_logits, mc_logits,cluster_logits,*_ = model(
-                input_ids, token_type_ids=token_type_ids, mc_token_ids=mc_token_ids
+            lm_logits, mc_logits,*_ = model(
+                input_ids, token_type_ids=token_type_ids, mc_token_ids=mc_token_ids,cl_token_ids=cl_token_ids,clusters=cluster,
             )
             lm_logits_flat_shifted = lm_logits[..., :-1,
                                                :].contiguous().view(-1, lm_logits.size(-1))
             lm_labels_flat_shifted = lm_labels[..., 1:].contiguous().view(-1)
-            return (lm_logits_flat_shifted, mc_logits), (lm_labels_flat_shifted, mc_labels),(cluster,cluster_logits)
+            return (lm_logits_flat_shifted, mc_logits), (lm_labels_flat_shifted, mc_labels)
     evaluator = Engine(inference)
 
     # Attach evaluation to trainer: we evaluate when we start the training and at the end of each epoch
