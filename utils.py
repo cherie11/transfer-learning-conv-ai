@@ -43,9 +43,9 @@ def get_dataset(tokenizer, dataset_path, dataset_cache):
 
         logger.info("Tokenize and encode the dataset")
         def tokenize(obj, key = None):
+            if key  in ['id',"cluster"]:
+                return int(obj)
             if isinstance(obj, str):
-                if key  == "cluster":
-                    return int(obj)
                 return tokenizer.convert_tokens_to_ids(tokenizer.tokenize(obj))
             if isinstance(obj, dict):
                 return dict((n, tokenize(o,n)) for n, o in obj.items())

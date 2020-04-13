@@ -21,7 +21,7 @@ from transformers import (AdamW, OpenAIGPTDoubleHeadsModel, OpenAIGPTTokenizer,
 
 from utils import get_dataset, make_logdir
 
-SPECIAL_TOKENS = ["<bos>", "<eos>", "<speaker1>", "<speaker2>", "<pad>", "<xneed>"]
+SPECIAL_TOKENS = ["<bos>", "<eos>", "<speaker1>", "<speaker2>", "<xneed>","<pad>", ]
 ATTR_TO_SPECIAL_TOKEN = {'bos_token': '<bos>', 'eos_token': '<eos>', 'pad_token': '<pad>',
                          'additional_special_tokens': ['<speaker1>', '<speaker2>', '<xneed>']}
 """
@@ -72,19 +72,30 @@ def add_special_tokens_(model, tokenizer):
             new_num_tokens=orig_num_tokens + num_added_tokens)
 
 
-def build_input_from_segments(persona, history, reply, tokenizer,cluster, event, lm_labels=False, with_eos=True):
+def build_input_from_segments(persona, history, reply, tokenizer,cluster, event, pid, lm_labels=False, with_eos=True):
     """ Build a sequence of input from 3 segments: persona, history and last reply. """
     bos, eos, speaker1, speaker2, xneed = tokenizer.convert_tokens_to_ids(
         SPECIAL_TOKENS[:-1])
     sequence = [[bos] + list(chain(*persona)) + [xneed] + event] + \
         history + [reply + ([eos] if with_eos else [])]
     # seq: <bos> PERSONA <sp1> U1P1 <sp2> U1P2 ... 
-    sequence = [sequence[0]] + [[speaker2 if (len(sequence)-i) %
+    # P1 P2 P1 P2 P1
+    
+    if pid == 2:
+        sequence = [sequence[0]] + [[speaker2 if (len(sequence)-i) %
                                  2 else speaker1] + s for i, s in enumerate(sequence[1:])]
+    else:
+        sequence = [sequence[0]] + [[speaker1 if (len(sequence)-i) %
+                                 2 else speaker2] + s for i, s in enumerate(sequence[1:])]
     instance = {}
     instance["input_ids"] = list(chain(*sequence))
-    instance["token_type_ids"] = [speaker2 if i %
+    if pid == 2:
+        instance["token_type_ids"] = [speaker2 if i %
                                   2 else speaker1 for i, s in enumerate(sequence) for _ in s]
+    else:
+        instance["token_type_ids"] = [speaker1 if i %
+                                  2 else speaker2 for i, s in enumerate(sequence) for _ in s]
+        
     instance["mc_token_ids"] = len(instance["input_ids"]) - 1
     instance['cluster'] = cluster
     instance["lm_labels"] = [-100] * len(instance["input_ids"])
@@ -106,26 +117,28 @@ def get_data_loaders(args, tokenizer):
         if args.num_candidates > 0 and dataset_name == 'train':
             num_candidates = min(args.num_candidates, num_candidates)
         for dialog in dataset:
-            persona = dialog["personality"].copy()
+            # persona = dialog["personality"].copy()
 
-            for _ in range(args.personality_permutations):
-                for utterance in dialog["utterances"]:
-                    cluster = utterance["cluster"] 
-                    event = utterance["event"]
-                    history = utterance["history"][-(2*args.max_history+1):]
-                    for j, candidate in enumerate(utterance["candidates"][-num_candidates:]):
-                        lm_labels = bool(j == num_candidates-1)
-                        instance = build_input_from_segments(
-                            persona, history, candidate, tokenizer, cluster, event, lm_labels)
-                        for input_name, input_array in instance.items():
-                            datasets[dataset_name][input_name].append(
-                                input_array)
-                    datasets[dataset_name]["mc_labels"].append(
-                        num_candidates - 1)
-                    datasets[dataset_name]["n_candidates"] = num_candidates
-                    datasets[dataset_name]["n_cluster"] = num_cluster
+            # for _ in range(args.personality_permutations):
+            for utterance in dialog["utterances"]:
+                cluster = utterance["cluster"] 
+                persona = utterance["personality"].copy()
+                event = utterance["event"]
+                pid = utterance['id']
+                history = utterance["history"][-(2*args.max_history+1):]
+                for j, candidate in enumerate(utterance["candidates"][-num_candidates:]):
+                    lm_labels = bool(j == num_candidates-1)
+                    instance = build_input_from_segments(
+                        persona, history, candidate, tokenizer, cluster, event,pid, lm_labels)
+                    for input_name, input_array in instance.items():
+                        datasets[dataset_name][input_name].append(
+                            input_array)
+                datasets[dataset_name]["mc_labels"].append(
+                    num_candidates - 1)
+                datasets[dataset_name]["n_candidates"] = num_candidates
+                datasets[dataset_name]["n_cluster"] = num_cluster
                 # permuted personalities
-                persona = [persona[-1]] + persona[:-1]
+                # persona = [persona[-1]] + persona[:-1]
 
     logger.info("Pad inputs and convert to Tensor")
     tensor_datasets = {"train": [], "valid": []}
@@ -173,7 +186,7 @@ def train():
     parser.add_argument("--train_batch_size", type=int,
                         default=2, help="Batch size for training")
     parser.add_argument("--valid_batch_size", type=int,
-                        default=4, help="Batch size for validation")
+                        default=1, help="Batch size for validation")
     parser.add_argument("--gradient_accumulation_steps", type=int,
                         default=8, help="Accumulate gradients on several steps")
     parser.add_argument("--lr", type=float,
@@ -181,6 +194,8 @@ def train():
     parser.add_argument("--lm_coef", type=float,
                         default=1.0, help="LM loss coefficient")
     parser.add_argument("--mc_coef", type=float, default=1.0,
+                        help="Multiple-choice loss coefficient")
+    parser.add_argument("--cl_coef", type=float, default=1.0,
                         help="Multiple-choice loss coefficient")
     parser.add_argument("--max_norm", type=float,
                         default=1.0, help="Clipping gradient norm")
@@ -243,11 +258,11 @@ def train():
         model.train()
         batch = tuple(input_tensor.to(args.device) for input_tensor in batch)
         input_ids, mc_token_ids, lm_labels, mc_labels, token_type_ids,cluster = batch
-        (lm_loss), (mc_loss), *_ = model(
+        (lm_loss), (mc_loss), (cluster_loss), *_ = model(
             input_ids, token_type_ids=token_type_ids, mc_token_ids=mc_token_ids,
             mc_labels=mc_labels, lm_labels=lm_labels,clusters=cluster
         )
-        loss = (lm_loss * args.lm_coef + mc_loss * args.mc_coef) / \
+        loss = (lm_loss * args.lm_coef + mc_loss * args.mc_coef + args.cl_coef * cluster_loss) / \
             args.gradient_accumulation_steps
         if args.fp16:
             with amp.scale_loss(loss, optimizer) as scaled_loss:
@@ -269,16 +284,16 @@ def train():
         with torch.no_grad():
             batch = tuple(input_tensor.to(args.device)
                           for input_tensor in batch)
-            input_ids, mc_token_ids, lm_labels, mc_labels, token_type_ids = batch
-            logger.info(tokenizer.decode(input_ids[0, -1, :].tolist()))
+            input_ids, mc_token_ids, lm_labels, mc_labels, token_type_ids,cluster = batch
+            # logger.info(tokenizer.decode(input_ids[0, -1, :].tolist()))
             # if we dont send labels to model, it doesnt return losses
-            lm_logits, mc_logits, *_ = model(
-                input_ids, token_type_ids=token_type_ids, mc_token_ids=mc_token_ids,
+            lm_logits, mc_logits,cluster_logits,*_ = model(
+                input_ids, token_type_ids=token_type_ids, mc_token_ids=mc_token_ids
             )
             lm_logits_flat_shifted = lm_logits[..., :-1,
                                                :].contiguous().view(-1, lm_logits.size(-1))
             lm_labels_flat_shifted = lm_labels[..., 1:].contiguous().view(-1)
-            return (lm_logits_flat_shifted, mc_logits), (lm_labels_flat_shifted, mc_labels)
+            return (lm_logits_flat_shifted, mc_logits), (lm_labels_flat_shifted, mc_labels),(cluster,cluster_logits)
     evaluator = Engine(inference)
 
     # Attach evaluation to trainer: we evaluate when we start the training and at the end of each epoch
