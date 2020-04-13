@@ -9,4 +9,5 @@ __pycache__
 runs/
 .DS_Store
 gpt_personachat_cache_v2/
+*.bin
 *dataset_cache*
