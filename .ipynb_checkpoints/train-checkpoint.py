@@ -185,7 +185,7 @@ def train():
     parser.add_argument("--max_history", type=int, default=2,
                         help="Number of previous exchanges to keep in history")
     parser.add_argument("--train_batch_size", type=int,
-                        default=3, help="Batch size for training")
+                        default=4, help="Batch size for training")
     parser.add_argument("--valid_batch_size", type=int,
                         default=2, help="Batch size for validation")
     parser.add_argument("--gradient_accumulation_steps", type=int,
@@ -261,7 +261,7 @@ def train():
         input_ids, mc_token_ids, lm_labels, mc_labels, token_type_ids,cluster,cl_token_ids, = batch
         (lm_loss), (mc_loss),  *_ = model(
             input_ids, token_type_ids=token_type_ids, mc_token_ids=mc_token_ids,
-            mc_labels=mc_labels, lm_labels=lm_labels,clusters=cluster,cl_token_ids=cl_token_ids
+            mc_labels=mc_labels, lm_labels=lm_labels,clusters=cluster,cl_token_ids=cl_token_ids,with_cluster=True
         )
         loss = (lm_loss * args.lm_coef + mc_loss * args.mc_coef ) / \
             args.gradient_accumulation_steps
@@ -289,7 +289,7 @@ def train():
             # logger.info(tokenizer.decode(input_ids[0, -1, :].tolist()))
             # if we dont send labels to model, it doesnt return losses
             lm_logits, mc_logits,*_ = model(
-                input_ids, token_type_ids=token_type_ids, mc_token_ids=mc_token_ids,cl_token_ids=cl_token_ids,clusters=cluster,
+                input_ids, token_type_ids=token_type_ids, mc_token_ids=mc_token_ids,cl_token_ids=cl_token_ids,clusters=cluster,with_cluster=True
             )
             lm_logits_flat_shifted = lm_logits[..., :-1,
                                                :].contiguous().view(-1, lm_logits.size(-1))
