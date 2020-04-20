@@ -67,7 +67,7 @@ def sample_sequence(personality, history,event,cluster,pid, tokenizer, model, ar
         token_type_ids = torch.tensor(instance["token_type_ids"], device=args.device).unsqueeze(0)
         cluster = torch.tensor(instance["cluster"], device=args.device).unsqueeze(0)
         
-        logits = model(input_ids, token_type_ids=token_type_ids,clusters=cluster,with_cluster=False)
+        logits = model(input_ids, token_type_ids=token_type_ids,clusters=cluster,cl_token_ids=cl_token_ids,with_cluster=True)
         if isinstance(logits, tuple):  # for gpt2 and maybe others
             logits = logits[0]
         logits = logits[0, -1, :] / args.temperature
@@ -99,9 +99,6 @@ def get_test_loaders(args, tokenizer):
     for dataset_name, dataset in personachat.items():
         num_candidates = len(dataset[0]["utterances"][0]["candidates"])
         for dialog in dataset:
-            # persona = dialog["personality"].copy()
-
-            # for _ in range(args.personality_permutations):
             for utterance in dialog["utterances"]:
                 cluster = utterance["cluster"] 
                 persona = utterance["personality"]
