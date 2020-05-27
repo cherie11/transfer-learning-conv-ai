@@ -131,10 +131,10 @@ def run():
 
     logger.info("Sample a personality")
     dataset = get_dataset(tokenizer, args.dataset_path, args.dataset_cache)
-    personalities = [dialog["personality"] for dataset in dataset.values() for dialog in dataset]
-    personality = random.choice(personalities)
+    personalities = [dialog["personality"]  for dialog in dataset]
+    personality = personalities[0]#random.choice(personalities)
     logger.info("Selected personality: %s", tokenizer.decode(chain(*personality)))
-
+    input()
     history = []
     while True:
         raw_text = input(">>> ")

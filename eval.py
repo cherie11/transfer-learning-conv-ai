@@ -35,7 +35,7 @@ def average_distributed_scalar(scalar, args):
 
 def get_test_loaders(args, tokenizer):
     """ Prepare the dataset for training and evaluation """
-    personachat = get_dataset(tokenizer, args.dataset_path, args.dataset_cache)
+    personachat = {'test':get_dataset(tokenizer, args.dataset_path, args.dataset_cache)}
 
     logger.info("Build inputs and labels")
     datasets = {"test": defaultdict(list)}
@@ -128,7 +128,7 @@ if __name__ == "__main__":
              # (loss), lm_logits, presents, (all hidden_states), (attentions)
                 
             lm_logits,*_ = model(
-                input_ids, token_type_ids=token_type_ids, clusters=cluster,cl_token_ids=cl_token_ids,with_cluster = False
+                input_ids, token_type_ids=token_type_ids, clusters=cluster,cl_token_ids=cl_token_ids,with_cluster = True
             )
             lm_logits_flat_shifted = lm_logits[..., :-1,
                                                :].contiguous().view(-1, lm_logits.size(-1))

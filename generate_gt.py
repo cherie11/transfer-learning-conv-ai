@@ -75,11 +75,13 @@ def sample_sequence(personality, history,event,cluster,pid, tokenizer, model, ar
         probs = F.softmax(logits, dim=-1)
 
         prev = torch.topk(probs, 1)[1] if args.no_sample else torch.multinomial(probs, 1)
+        cnt = 0
         if i < args.min_length and prev.item() in special_tokens_ids:
-            while prev.item() in special_tokens_ids:
+            while prev.item() in special_tokens_ids and cnt<10000:
                 if probs.max().item() == 1:
                     warnings.warn("Warning: model generating special token with probability 1.")
                     break  # avoid infinitely looping over special token
+                cnt +=1
                 prev = torch.multinomial(probs, num_samples=1)
 
         if prev.item() in special_tokens_ids:
@@ -178,7 +180,7 @@ def run():
     logger.info("Sample a personality")
     dataset = get_dataset(tokenizer, args.dataset_path, args.dataset_cache)
     res_dialogs = []
-    for dialog in tqdm( dataset['test']):
+    for dialog in tqdm( dataset):
         out_dialog = {}
         
         out_dialog["utterances"] = []
@@ -205,7 +207,7 @@ def run():
             out_utterance['pred']=out_text
             out_dialog["utterances"].append(out_utterance)
         res_dialogs.append(out_dialog)
-    json.dump(res_dialogs,open("pred_with_cl.json",'w'))
+    json.dump(res_dialogs,open("pred_with_switch_cluster_100.json",'w'))
                      
 
 
